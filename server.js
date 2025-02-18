@@ -81,18 +81,26 @@ function notifyClientsOfRedisError() {
 
 // Handle messages and send only to subscribed clients
 subscriber.on('message', (channel, message) => {
-    console.log(`[Redis] Message received on ${channel}:`);
+    console.log(`[Redis] Message received on ${channel}:`, message + "...");
 
     try {
         const data = JSON.parse(message);
-        const vehicleId = data.vehicleName;
+        
+        // For raw device_id channels, use the channel name as vehicleName if not present
+        const vehicleName = data.vehicleName || data.device_id || channel;
 
-        // Notify all clients subscribed to this vehicle's channel
+        // Create a normalized data object if needed
+        const normalizedData = {
+            ...data,
+            vehicleName: vehicleName
+        };
+
+        // Notify all clients subscribed to this channel
         clients.forEach((client, clientId) => {
             const clientChannels = clientSubscriptions.get(clientId) || [];
             if (clientChannels.includes(channel)) {
                 try {
-                    client.write(`data: ${JSON.stringify(data)}\n\n`);
+                    client.write(`data: ${JSON.stringify(normalizedData)}\n\n`);
                 } catch (err) {
                     console.error(`[SSE] Error sending message to client ${clientId}:`, err);
                     cleanupClient(clientId);
@@ -162,8 +170,8 @@ app.get('/events', (req, res) => {
         return;
     }
 
-    // Create channel names for each vehicle
-    const channels = vehicleIds.map(id => `vehicleUpdates:${id}`);
+    // IMPORTANT CHANGE: Use the raw device ID as the channel name, not "vehicleUpdates:id"
+    const channels = vehicleIds;
     clientSubscriptions.set(clientId, channels);
 
     console.log(`[SSE] Client ${clientId} subscribed to ${channels.length} vehicles: ${channels.join(', ')}`);
@@ -185,7 +193,7 @@ app.get('/events', (req, res) => {
         });
     }
 
-    console.log("newSubscriptions",newSubscriptions)
+    console.log("newSubscriptions", newSubscriptions);
 
     // Send initial confirmation with subscribed vehicles
     res.write(`data: ${JSON.stringify({
@@ -199,7 +207,6 @@ app.get('/events', (req, res) => {
         cleanupClient(clientId);
     });
 });
-
 // Endpoint to add/remove vehicle subscriptions for an existing connection
 app.post('/events/update-subscription', (req, res) => {
     const clientId = req.body.clientId;
